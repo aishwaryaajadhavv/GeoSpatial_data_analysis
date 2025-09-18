@@ -1,0 +1,326 @@
+install.packages("sf", dependencies = TRUE) install.packages("terra", dependencies = TRUE) install.packages(c("spData", "mapview", "ggplot2", "tmap")) install.packages("tidyverse", dependencies = TRUE) r
+
+library(sf) library(spData)
+
+data("cycle_hire_osm", package = "spData") head(cycle_hire_osm) \# plot first few rows
+
+plot(cycle_hire_osm["geometry"], axes = TRUE) st_crs(cycle_hire_osm) cycle_hire_osm \<- ßst_transform(cycle_hire_osm, crs = st_crs(32630)) \# UTM zone 30N for London head(cycle_hire_osm) library(mapview) mapview(cycle_hire_osm["capacity"], layer.name = "Rental capacity")
+
+```{r}
+library(sf)
+data("seine", package = "spData")
+seine
+```
+
+```{r}
+library(ggplot2)
+
+ggplot(seine) +
+  geom_sf(aes(color = name)) +
+```
+
+```{r}
+geom_sf_label(aes(label = name)) # add labels for river names
+```
+
+```{r}
+data(world, package = "spData")
+head(world)
+breaks <- quantile(world$gdpPercap, probs = c(0.025, 0.25, 0.5, 0.75, 0.975), na.rm = TRUE) # get quantile values
+
+ggplot(world) + geom_sf(aes(fill = gdpPercap)) + 
+  scale_fill_gradientn(colours= c("#ffffcc", "#a1dab4" , "#41b6c4", "#2c7fb8", "#253494"), # binned color scale
+                       trans = 'log', # log-transformation
+                       breaks = breaks) +
+  theme_minimal()
+```
+
+Geometry operations
+
+```{r}
+#Locate the center point of geometries
+world_pts <- st_centroid(world)
+
+```
+
+```{r}
+#Simplify shapes by removing vertices
+world_projected <- st_transform(world, "EPSG: 3857") # need to transform to projected CRS
+world_simple <- st_simplify(world_projected, dTolerance = 1e5) # 100km simplification
+```
+
+```{r}
+#Cast the simplified POLYGON objects back to type 'MULTIPOLYGON', and remove the rows with empty geometries
+
+world_simple <- st_cast(world_simple, "MULTIPOLYGON")
+world_simple <- world_simple[!st_is_empty(world_simple),] # subset rows
+
+```
+
+```{r}
+#Extend the boundaries of vectors
+world_buffered <- st_buffer(world_simple, dist = 1e5) # 100km
+```
+
+```{r}
+#Remove overlaps among the polygons in world_simple and merge all polygons
+world_diff <- st_difference(world_simple) # exclude overlaps
+world_union <- st_union(world_simple)
+```
+
+```{r}
+#Plot the manipulated objects derived from the country polygons
+#packages
+library(sf)
+library(tmap)
+sf_use_s2(FALSE)
+
+tm_shape(world_pts) + tm_dots() + # polygon centroids
+  tm_shape(world_simple) + tm_polygons(alpha = 0.5) + # simplified
+  tm_shape(world_buffered) + tm_polygons(alpha = 0.5) + # buffered
+  tm_shape(world_union) + tm_polygons(alpha = 0.5) + # merged (union)
+  tm_view(set.view = 2) # zoom in
+
+```
+------------------------------------------------------------------------
+
+#learning  about geometry operations 
+
+#Locating the center point of geometries
+```{r}
+world_pts <- st_centroid(world)
+
+```
+```{r}
+library(sf)
+
+# Cast the simplified POLYGON objects back to MULTIPOLYGON
+world_simple <- st_cast(world_simple, "MULTIPOLYGON")
+world_simple <- world_simple[!st_is_empty(world_simple), ]  # subset rows
+
+# Simplify shapes by removing vertices
+world_projected <- st_transform(world, "EPSG:3857")         # project to CRS
+world_simple    <- st_simplify(world_projected, dTolerance = 1e5)
+
+
+```
+```{r}
+#Extend the boundaries of vectors
+world_buffered <- st_buffer(world_simple, dist = 1e5) # 100km
+```
+
+```{r}
+#Remove overlaps among the polygons in `world_simple` and merge all polygons
+world_diff <- st_difference(world_simple) # exclude overlaps
+world_union <- st_union(world_simple)
+```
+
+------------------------------------------------------------------------
+
+#Plot the manipulated objects derived from the country polygons
+
+```{r}
+library(sf)
+library(tmap)
+
+# (optional) if you want planar ops
+sf_use_s2(FALSE)
+
+# --- data prep ---
+# project to Web Mercator
+world_projected <- st_transform(world, 3857)
+
+# simplify (keep topology) and fix invalid geometries
+world_simple <- st_simplify(world_projected, dTolerance = 1e5, preserveTopology = TRUE)
+world_simple <- st_make_valid(world_simple)
+
+# derived layers
+world_buffered <- st_buffer(world_simple, dist = 1e5)   # ~100 km buffer
+world_union    <- st_union(world_simple)                # merged polygons
+world_pts      <- st_centroid(world_simple)             # polygon centroids
+
+# --- map ---
+tmap_mode("view")
+tm_shape(world_pts)      + tm_dots() +
+tm_shape(world_simple)   + tm_polygons(alpha = 0.5) +
+tm_shape(world_buffered) + tm_polygons(alpha = 0.5) +
+tm_shape(world_union)    + tm_polygons(alpha = 0.5) +
+tm_view(set.view = 2)    # zoom in
+```
+
+
+# Subset rows of an `sf` ('target') object based on its spatial relationship with another
+
+```{r message=FALSE, error=FALSE, warning = FALSE, fig.height=1, out.width = "100%", dpi=300, fig.align='center'}
+
+uk <- st_filter(world_projected, # target: world polygons
+                st_transform(cycle_hire_osm, st_crs(world_projected)), # bicycle rental points in London - crs must be the same
+                .predicate = st_intersects) # default setting
+
+tm_shape(uk) + tm_polygons() +
+  tm_shape(cycle_hire_osm) + tm_dots()
+
+```
+
+# Match rows (and append columns) to an `sf` ('target') object based on its spatial relationship with another
+
+```{r message=FALSE, error=FALSE, warning = FALSE, fig.height=1, out.width = "100%", dpi=300, fig.align='center'}
+cycle_hire_osm <- st_join(cycle_hire_osm, # target
+                          st_transform(world_projected, st_crs(cycle_hire_osm)))
+
+head(cycle_hire_osm)
+```
+
+#Combine the official dataset `cycle_hire` with the OSM dataset `cycle_hire_osm` of bicycle rental points across London, but only those beyond a distance of 10 m (remove duplicate points)
+
+```{r echo = FALSE, message=FALSE, error=FALSE, warning = FALSE, fig.height=1, out.width = "100%", dpi=300, fig.align='center'}
+
+library(dplyr)
+
+data("cycle_hire", package = "spData")
+cycle_hire <- st_transform(cycle_hire, st_crs(cycle_hire_osm))
+
+predicate <- st_is_within_distance(cycle_hire_osm, 
+                                   cycle_hire, 
+                                   dist = 10)
+
+to_add <- !lengths(predicate) > 0
+
+cycle_hire_osm_subset <- cycle_hire_osm[to_add,] %>% 
+  mutate(source = "osm")
+
+cycle_combined <- cycle_hire %>% 
+  mutate(source = "official") %>% 
+  bind_rows(cycle_hire_osm_subset)
+
+tm_shape(cycle_combined) + tm_dots("source")
+
+```
+
+------------------------------------------------------------------------
+
+# Working with rasters {.tabset .tabset-fade .tabset-pills}
+
+#Load package
+
+```{r message=FALSE, error=FALSE}
+library(terra)
+```
+
+## Continuous
+
+#Example raster: Elevation in Luxembourg
+
+```{r message=FALSE, error=FALSE, fig.width=6, fig.height=4.5, out.height=280, dpi=300, fig.align='center'}
+filepath <- system.file("ex/elev.tif", package = "terra")
+elevation <- rast(filepath)
+elevation_utm <- project(elevation, "EPSG:23032") # project to UTM zone 32N for Luxembourg
+
+```
+
+#Example vector: Polygons of Luxembourg
+
+```{r message=FALSE, error=FALSE, fig.width=8, fig.height=4.5, out.height=300, dpi=300, fig.align='center'}
+filepath <- system.file("ex/lux.shp", package = "terra")
+luxembourg <- vect(filepath)
+luxembourg
+```
+
+#Summarise the mean raster values for each sub-region (polygon) in Luxembourg
+
+```{r}
+elev_mean <- extract(elevation, luxembourg, 
+                     fun = mean, na.rm = TRUE)
+luxembourg$elevation_mean <- elev_mean$elevation # add results to new column
+```
+
+#Plot the rasters and polygons
+
+```{r message=FALSE, error=FALSE, fig.height=1, out.width = "100%", dpi=300, fig.align='center'}
+
+tm_shape(elevation) +
+  tm_raster(palette = "RdYlGn", n = 10) + # use similar color palette
+  tm_shape(st_as_sf(luxembourg)) + # convert to sf, as tmap currently does not support SpatVect
+  tm_polygons(col = "elevation_mean", palette = "RdYlGn", alpha = 0.7) 
+```
+
+#Narrow down raster data to a specific area of interest
+
+```{r message=FALSE, error=FALSE, fig.height=5, out.width="70%", dpi=300, fig.align='center'}
+luxembourg_subset <- luxembourg[luxembourg$NAME_2 == "Mersch"]
+elevation_subset <- crop(elevation, luxembourg_subset) # reduce spatial extent
+elevation_subset <- mask(elevation_subset, luxembourg_subset) # convert values outside polygon to NA
+plot(elevation_subset)
+```
+
+------------------------------------------------------------------------
+
+## Discrete
+
+#Classify values into a discrete (categorical) raster
+
+```{r message=FALSE, error=FALSE, fig.height=5, out.width="70%", dpi=300, fig.align='center'}
+elevation_2class <- ifel(elevation > 400, 1, 0) # E.g., threshold for 'high' elevation at 400m
+plot(elevation_2class) # low/high
+```
+
+```{r message=FALSE, error=FALSE, fig.height=5, out.width="70%",  dpi=300, fig.align='center'}
+elevation_3class <- 
+  classify(elevation, 
+           rbind(c(400, Inf, 2), # matrix of 3 columns, 'from', 'to' and 'becomes'
+                 c(300, 400, 1),
+                 c(-Inf, 300, 0)))  
+plot(elevation_3class) # low/mid/high
+```
+
+------------------------------------------------------------------------
+
+# Data conversions
+
+#Vectorize rasters into points, lines and polygons
+
+```{r message=FALSE, error=FALSE}
+elevation_pts <- as.points(elevation_subset) # points
+elevation_contours <- as.contour(elevation_subset) # lines
+elevation_polygons <- as.polygons(elevation_subset) # polygons
+```
+
+#Visualise all output
+
+```{r message=FALSE, error=FALSE, fig.height=1, out.width="100%", dpi=300, fig.align='center'}
+
+tm_shape(elevation_subset) + tm_raster(palette = "RdYlGn", n = 10) + # original raster
+  tm_shape(st_as_sf(elevation_pts)) + tm_dots() + 
+  tm_shape(st_as_sf(elevation_contours)) + tm_lines() + 
+  tm_shape(st_as_sf(elevation_polygons)) + tm_polygons(alpha = 0) + 
+  tm_view(set.view = 11)
+```
+
+#Rasterize the points dataset `cycle_hire_osm` based on the column '`capacity`'
+
+```{r message=FALSE, error=FALSE}
+# first create a raster template at a specified resolution and crs
+rast_template <- rast(ext(cycle_hire_osm), 
+                      resolution = 1000,
+                      crs = st_crs(cycle_hire_osm)$wkt) # input format is WKT
+
+# then, rasterize the points dataset based on the template
+cyclehire_capacity <- 
+  rasterize(cycle_hire_osm, rast_template,
+            field = "capacity", 
+            fun = sum, # add up values of points within each pixel
+            na.rm = TRUE)
+```
+
+# Overlay the original points over the per-pixel capacity of bicycle docking stations
+
+```{r message=FALSE, error=FALSE, fig.height=1, out.width="100%", dpi=300, fig.align='center'}
+
+tm_shape(cyclehire_capacity) + 
+  tm_raster(title = "Capacity (sum)", palette = "YlGn") +
+  tm_shape(st_as_sf(cycle_hire_osm)) + 
+  tm_dots(size = 0.01) 
+```
+
+
+
